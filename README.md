@@ -41,10 +41,7 @@ unattended builder cannot grind on one PR forever.
 Copy the skills into your global skills directory:
 
 ```bash
-for s in loop-init loop-spec loop-build loop-review; do
-  mkdir -p "$HOME/.claude/skills/$s"
-  cp "skills/$s/SKILL.md" "$HOME/.claude/skills/$s/SKILL.md"
-done
+node scripts/check-installed.mjs --install
 ```
 
 Then run `/reload-skills` (or restart Claude Code) and confirm `/skills` lists
@@ -117,3 +114,25 @@ what an agent may do. Run it locally with:
 ```bash
 node scripts/validate.mjs
 ```
+
+## Drift between tracked and installed skills
+
+The skills live in two places: tracked here in `skills/`, and installed at
+`~/.claude/skills/<name>/SKILL.md` where Claude Code reads them. Editing one
+copy silently diverges from the other, and `scripts/validate.mjs` only ever
+checks the tracked copy — so an installed skill can be weakened while CI stays
+green.
+
+[`scripts/check-installed.mjs`](scripts/check-installed.mjs) compares the two.
+A bare run is read-only and exits 1 if any skill is missing or has drifted,
+naming the first differing line:
+
+```bash
+node scripts/check-installed.mjs
+```
+
+Pass `--install` to overwrite the installed copies from this repository, or
+`--root <path>` to compare against somewhere other than `~/.claude/skills`.
+
+It is deliberately not part of CI: it reads `$HOME`, which means nothing on a
+CI runner.
