@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -102,10 +103,21 @@ for (const name of tracked) {
   });
 }
 
+// Dirent.isDirectory() is false for a symlink even when it points at a
+// directory, and installed skills are routinely symlinked in from a vault.
+// statSync follows the link; a broken link throws and is skipped.
+function isDirectoryFollowingLinks(path) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 const installedNames = existsSync(root)
-  ? readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
+  ? readdirSync(root).filter((name) =>
+      isDirectoryFollowingLinks(join(root, name)),
+    )
   : [];
 const untracked = installedNames.filter((name) => !tracked.includes(name)).sort();
 
