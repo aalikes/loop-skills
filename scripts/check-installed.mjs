@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -19,7 +20,8 @@ Compares the SKILL.md files tracked in skills/ against their installed copies.
   --root <path>   Install root to compare against.
                   Default: $HOME/.claude/skills
 
-Exit codes: 0 in sync (or installed), 1 drift detected, 2 bad usage.`;
+Exit codes: 0 in sync (or installed), 1 drift or missing, 2 bad usage,
+            3 a file could not be read or written.`;
 
 function usage(message) {
   process.stderr.write(`${message}\n\n${USAGE}\n`);
@@ -48,6 +50,21 @@ for (let i = 0; i < argv.length; i += 1) {
   }
 }
 
+// A root that exists but is not a directory is a mistyped argument, not drift.
+// Catching it here keeps readdirSync from throwing ENOTDIR mid-run and keeps
+// exit 1 meaning what the contract says it means.
+if (existsSync(root)) {
+  let rootStat;
+  try {
+    rootStat = statSync(root);
+  } catch (error) {
+    usage(`--root cannot be read (${error.code}): ${root}`);
+  }
+  if (!rootStat.isDirectory()) {
+    usage(`--root must be a directory, but this is not one: ${root}`);
+  }
+}
+
 const tracked = readdirSync(skillsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)
@@ -73,12 +90,35 @@ function firstDifferingLine(a, b) {
   return limit;
 }
 
+// `ERROR` is deliberately distinct from `MISSING`: a file that cannot be read is
+// a broken environment, while a file that is not there is ordinary drift. They
+// exit differently so a caller can tell them apart.
+const errorLine = (name, error, path) => `ERROR   ${name} — ${error.code}: ${path}`;
+
 if (install) {
+  const failed = [];
   for (const name of tracked) {
     const destination = installedPath(name);
-    mkdirSync(join(root, name), { recursive: true });
-    writeFileSync(destination, readFileSync(trackedPath(name)));
+    try {
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(destination, readFileSync(trackedPath(name)));
+    } catch (error) {
+      failed.push(errorLine(name, error, destination));
+      continue;
+    }
+    // Printed only after the write returned, so this line is never a claim
+    // about a write that did not happen.
     console.log(`wrote ${destination}`);
+  }
+  for (const line of failed) {
+    console.log(line);
+  }
+  if (failed.length > 0) {
+    console.log(
+      `\nInstalled ${tracked.length - failed.length} of ${tracked.length} skills to ${root}; ` +
+        `${failed.length} failed.`,
+    );
+    process.exit(3);
   }
   console.log(`Installed ${tracked.length} skills to ${root}`);
   process.exit(0);
@@ -86,15 +126,35 @@ if (install) {
 
 const missing = [];
 const drifted = [];
+const errors = [];
 
 for (const name of tracked) {
   const destination = installedPath(name);
-  if (!existsSync(destination)) {
-    missing.push({ name, destination });
+
+  let source;
+  try {
+    source = readFileSync(trackedPath(name));
+  } catch (error) {
+    errors.push(errorLine(name, error, trackedPath(name)));
     continue;
   }
-  const source = readFileSync(trackedPath(name));
-  const installed = readFileSync(destination);
+
+  // ENOENT is the only errno that means "not installed". Everything else —
+  // EACCES on an unreadable file or its directory, EISDIR, ENOTDIR — means the
+  // file may well be there and we could not look at it, which is not the same
+  // thing and must not be reported as MISSING.
+  let installed;
+  try {
+    installed = readFileSync(destination);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      missing.push({ name, destination });
+    } else {
+      errors.push(errorLine(name, error, destination));
+    }
+    continue;
+  }
+
   if (source.equals(installed)) {
     continue;
   }
@@ -111,9 +171,16 @@ for (const name of tracked) {
 // link, a loose file, and a directory with no SKILL.md all correctly do not.
 // Dirent.isDirectory() would miss the symlinked case — it is false for a
 // symlink even when the link points at a directory.
-const installedNames = existsSync(root)
-  ? readdirSync(root).filter((name) => existsSync(join(root, name, "SKILL.md")))
-  : [];
+let installedNames = [];
+if (existsSync(root)) {
+  try {
+    installedNames = readdirSync(root).filter((name) =>
+      existsSync(join(root, name, "SKILL.md")),
+    );
+  } catch (error) {
+    errors.push(errorLine("(install root)", error, root));
+  }
+}
 const untracked = installedNames.filter((name) => !tracked.includes(name)).sort();
 
 for (const entry of drifted) {
@@ -123,16 +190,27 @@ for (const entry of drifted) {
 for (const entry of missing) {
   console.log(`MISSING ${entry.name} — expected at ${entry.destination}`);
 }
+for (const line of errors) {
+  console.log(line);
+}
 for (const name of untracked) {
   console.log(`WARN    ${name} is installed but not tracked in skills/`);
 }
 
-const inSync = tracked.length - missing.length - drifted.length;
+const skillErrors = errors.filter((line) => !line.includes("(install root)"));
+const inSync = tracked.length - missing.length - drifted.length - skillErrors.length;
 console.log(
   `\nChecked ${tracked.length} skills against ${root}: ` +
     `${inSync} in sync, ${drifted.length} drifted, ${missing.length} missing, ` +
-    `${untracked.length} untracked.`,
+    `${skillErrors.length} unreadable, ${untracked.length} untracked.`,
 );
+
+// An unreadable file outranks drift: the run could not answer the question it
+// was asked, so it must not exit 1 and be mistaken for a clean drift report.
+if (errors.length > 0) {
+  console.log("Fix the errors above; the comparison above them is incomplete.");
+  process.exit(3);
+}
 
 if (drifted.length > 0 || missing.length > 0) {
   console.log("Run with --install to overwrite the installed copies.");
