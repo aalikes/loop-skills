@@ -54,6 +54,11 @@ const spec = read("skills/loop-spec/SKILL.md");
 const init = read("skills/loop-init/SKILL.md");
 const readme = read("README.md");
 
+// Step 3 verifies a claim this same pass just wrote. GitHub's search index lags
+// writes by several seconds, so that verification has to be a direct read of the
+// issue; a search query can report the claim as never having happened.
+const claimSection = build.match(/## 3\. Claim[\s\S]*?(?=\n## )/)?.[0] ?? "";
+
 // Safety contracts. Each of these encodes a rule that makes the loop safe to run
 // unattended. If an edit removes one, CI fails rather than quietly widening what
 // an agent is allowed to do.
@@ -66,6 +71,10 @@ const requiredContracts = [
   [build.includes("Never merge"), "builder must never merge"],
   [/repair budget/i.test(build), "builder must cap its repair attempts"],
   [build.includes("loop-stuck"), "builder must have an escape hatch label"],
+  [
+    claimSection.includes("gh issue view NUMBER") && !claimSection.includes("--search"),
+    "builder must confirm its claim with a direct issue read, never a lagging search query",
+  ],
   [review.includes("gh pr checks NUMBER --required"), "reviewer must inspect required checks"],
   [review.includes("Loop review of COMMIT_SHA"), "reviewer must record the reviewed SHA"],
   [review.includes("Never merge and never enable auto-merge"), "reviewer must never merge"],

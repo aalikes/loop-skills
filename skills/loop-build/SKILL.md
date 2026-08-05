@@ -82,15 +82,32 @@ Prefer higher priority if the repo uses priority labels, then oldest first. If
 nothing is claimable, say so plainly and end the pass. Do not invent work, do
 not relax these conditions, and do not pick a blocked issue.
 
+The `--search` filter above narrows the queue and nothing more. GitHub's search
+index trails writes by several seconds, so a search result can still describe an
+issue as it was *before* a label or assignee that this same pass just wrote.
+Never use it to confirm your own write — an issue you just claimed can come back
+unclaimed, and an issue somebody else just claimed can come back available. Step
+3 reads the issue directly for exactly that reason.
+
 ## 3. Claim (the cooperative lock)
 
 ```bash
 gh issue edit NUMBER --add-assignee @me --add-label loop-building
 ```
 
-Claim **before** reading deeply or writing code. Then immediately re-fetch the
-issue. If it is now blocked, assigned to somebody else, or no longer
-`agent-ready`, release nothing you did not take and return to step 2.
+Claim **before** reading deeply or writing code. Then immediately confirm the
+claim with a direct read of the issue:
+
+```bash
+gh issue view NUMBER --json number,assignees,labels
+```
+
+This reads the issue itself, so it reflects the claim you just wrote. Confirming
+with the queue query from step 2 instead would be unreliable: that query goes
+through an index that lags writes, and it can report your own claim as never
+having happened. If the issue now comes back blocked, assigned to somebody else,
+or no longer `agent-ready`, release nothing you did not take and return to step
+2.
 
 The assignee prevents two different people from taking the same issue. It is
 not an atomic lock between simultaneous sessions authenticated as the same
