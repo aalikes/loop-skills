@@ -3,7 +3,6 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -58,7 +57,10 @@ const trackedPath = (name) => join(skillsDir, name, "SKILL.md");
 const installedPath = (name) => join(root, name, "SKILL.md");
 
 // The byte comparison decides whether a skill has drifted; this only locates
-// where, for the report. Buffers that differ always differ on some line.
+// where, for the report. It compares decoded text, so bytes that differ can
+// still decode to the same string — distinct invalid UTF-8 all becomes U+FFFD.
+// The loop then falls through to `limit`, which is a usable line number for a
+// file that has genuinely drifted.
 function firstDifferingLine(a, b) {
   const left = a.split("\n");
   const right = b.split("\n");
@@ -103,21 +105,14 @@ for (const name of tracked) {
   });
 }
 
-// Dirent.isDirectory() is false for a symlink even when it points at a
-// directory, and installed skills are routinely symlinked in from a vault.
-// statSync follows the link; a broken link throws and is skipped.
-function isDirectoryFollowingLinks(path) {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
+// An installed skill is a directory holding a SKILL.md. Testing for that file
+// rather than for a directory gets the symlink case right for free: existsSync
+// follows links, so a skill symlinked in from a vault counts, while a broken
+// link, a loose file, and a directory with no SKILL.md all correctly do not.
+// Dirent.isDirectory() would miss the symlinked case — it is false for a
+// symlink even when the link points at a directory.
 const installedNames = existsSync(root)
-  ? readdirSync(root).filter((name) =>
-      isDirectoryFollowingLinks(join(root, name)),
-    )
+  ? readdirSync(root).filter((name) => existsSync(join(root, name, "SKILL.md")))
   : [];
 const untracked = installedNames.filter((name) => !tracked.includes(name)).sort();
 

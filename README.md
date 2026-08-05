@@ -45,7 +45,12 @@ node scripts/check-installed.mjs --install
 ```
 
 Then run `/reload-skills` (or restart Claude Code) and confirm `/skills` lists
-all four. Install them per-repo instead by copying into `.claude/skills/`.
+all four. To install them for a single repo instead, point `--root` at that
+repo's skills directory:
+
+```bash
+node scripts/check-installed.mjs --install --root .claude/skills
+```
 
 ## Launch
 
@@ -132,7 +137,9 @@ node scripts/check-installed.mjs
 ```
 
 Pass `--install` to overwrite the installed copies from this repository, or
-`--root <path>` to compare against somewhere other than `~/.claude/skills`.
+`--root <path>` to work against somewhere other than `~/.claude/skills`.
+`--root` redirects both halves: a bare run compares against it, and `--install`
+writes into it, which is what makes the per-repo install above work.
 
 It is deliberately not part of CI: it reads `$HOME`, which means nothing on a
 CI runner.
